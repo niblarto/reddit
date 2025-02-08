@@ -7,6 +7,7 @@ import fetch from 'node-fetch';
 import { format } from 'date-fns';
 import { networkInterfaces } from 'os';
 import cookieParser from 'cookie-parser';
+import session from 'express-session';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +37,13 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+app.use(session({
+  secret: 'your-secret-key',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true if using HTTPS
+}));
 
 // Add error handling middleware
 app.use((err, req, res, next) => {
