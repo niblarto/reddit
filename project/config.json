@@ -1,0 +1,25 @@
+{
+  "filters": [
+    {
+      "subreddit": "UsenetInvites",
+      "keywords": [],
+      "excludedKeywords": [
+        "[W]"
+      ],
+      "monitorAll": false
+    },
+    {
+      "subreddit": "CrackWatch",
+      "keywords": [],
+      "excludedKeywords": []
+    }
+  ],
+  "telegramToken": "7326460997:AAG6Ipv3CnbyUhqql9IZ6PmECbEmfl2twas",
+  "chatId": "7446498644",
+  "notifiedPostIds": [],
+  "hiddenPostIds": [],
+  "pinnedPostIds": [],
+  "username": "admin",
+  "password": "admin",
+  "hoursBack": 24
+}
