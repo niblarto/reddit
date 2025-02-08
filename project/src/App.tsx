@@ -43,6 +43,7 @@ interface Config {
 
 // Login page component
 function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const queryClient = useQueryClient();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -61,6 +62,7 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
       });
 
       if (response.ok) {
+        await queryClient.invalidateQueries();
         onLogin();
       } else {
         setError('Invalid username or password');
@@ -182,7 +184,12 @@ function App() {
           return;
         }
         const data = await response.json();
-        setIsAuthenticated(data.isAuthenticated);
+        if (data.isAuthenticated) {
+          setIsAuthenticated(true);
+          await queryClient.invalidateQueries();
+        } else {
+          setIsAuthenticated(false);
+        }
       } catch (error) {
         setIsAuthenticated(false);
       } finally {
@@ -190,7 +197,7 @@ function App() {
       }
     };
     checkAuth();
-  }, []);
+  }, [queryClient]);
 
   // Add logout function
   const handleLogout = async () => {
@@ -810,7 +817,7 @@ function App() {
                       accept=".json"
                       className="hidden"
                     />
-                  </div> ```
+                  </div>
                   <button
                     onClick={saveCurrentState}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-white transition-colors ${
