@@ -17,7 +17,9 @@ function getLocalIP() {
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
       if (net.family === 'IPv4' && !net.internal) {
-        return net.address;
+        if (net.address.startsWith('192.168.')) {
+          return net.address;
+        }
       }
     }
   }
@@ -550,8 +552,8 @@ process.on('SIGINT', () => {
 });
 
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+const server = app.listen(PORT, LOCAL_IP, () => {
+  console.log(`Server running on http://${LOCAL_IP}:${PORT}`);
   checkRedditPosts();
   setInterval(checkRedditPosts, POLL_INTERVAL);
   setInterval(cleanupNotifiedPosts, CLEANUP_INTERVAL);
