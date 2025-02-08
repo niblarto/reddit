@@ -31,7 +31,7 @@ console.log(`Local IP address: ${LOCAL_IP}`);
 
 const app = express();
 app.use(cors({
-  origin: true,
+  origin: '*',
   credentials: true
 }));
 app.use(express.json());
