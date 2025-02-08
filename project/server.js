@@ -7,43 +7,35 @@ import fetch from 'node-fetch';
 import { format } from 'date-fns';
 import { networkInterfaces } from 'os';
 import cookieParser from 'cookie-parser';
-// import session from 'express-session';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Get local IP address
-// function getLocalIP() {
-//   const nets = networkInterfaces();
-//   for (const name of Object.keys(nets)) {
-//     for (const net of nets[name]) {
-//       if (net.family === 'IPv4' && !net.internal) {
-//         if (net.address.startsWith('192.168.')) {
-//           return net.address;
-//         }
-//       }
-//     }
-//   }
-//   return '0.0.0.0';
-// }
+function getLocalIP() {
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        if (net.address.startsWith('192.168.')) {
+          return net.address;
+        }
+      }
+    }
+  }
+  return '0.0.0.0';
+}
 
 const LOCAL_IP = getLocalIP();
 console.log(`Local IP address: ${LOCAL_IP}`);
 
 const app = express();
 app.use(cors({
-  origin: '*',
+  origin: true,
   credentials: true
 }));
 app.use(express.json());
 app.use(cookieParser());
-
-// app.use(session({
-//   secret: 'your-secret-key',
-//   resave: false,
-//   saveUninitialized: true,
-//   cookie: { secure: false } // Set to true if using HTTPS
-// }));
 
 // Add error handling middleware
 app.use((err, req, res, next) => {
@@ -560,8 +552,7 @@ process.on('SIGINT', () => {
 });
 
 const PORT = process.env.PORT || 3001;
-//const server = app.listen(PORT, LOCAL_IP, () => {
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, LOCAL_IP, () => {
   console.log(`Server running on http://${LOCAL_IP}:${PORT}`);
   checkRedditPosts();
   setInterval(checkRedditPosts, POLL_INTERVAL);
