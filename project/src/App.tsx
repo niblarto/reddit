@@ -240,32 +240,16 @@ function App() {
 
   const subreddits = filters.map(f => f.subreddit);
 
-  const { data: allPosts = [], isLoading, error, refetch: refetchPosts } = useQuery({
-    queryKey: ['posts', subreddits],
+  const { data: posts = [], isLoading: isPostsLoading, refetch: refetchPosts } = useQuery({
+    queryKey: ['posts'],
     queryFn: async () => {
-      if (!subreddits.length) return [];
-      
-      const allPostsData = await Promise.all(
-        subreddits.map(async (subreddit) => {
-          try {
-            const response = await fetch(`${API_URL}/api/reddit/${subreddit}`, fetchConfig);
-            const data = await response.json();
-            return data.data.children.map((child: any) => ({
-              ...child.data,
-              subreddit: child.data.subreddit
-            }));
-          } catch (error) {
-            console.error(`Error fetching posts from r/${subreddit}:`, error);
-            return [];
-          }
-        })
-      );
-
-      const posts = allPostsData.flat();
-      return posts.sort((a, b) => b.created_utc - a.created_utc);
+      const response = await fetch(`${API_URL}/api/posts`, fetchConfig);
+      if (!response.ok) {
+        throw new Error('Failed to load posts');
+      }
+      return response.json();
     },
-    refetchInterval: 10 * 60 * 1000,
-    enabled: subreddits.length > 0,
+    refetchInterval: 60000, // Refetch every minute
   });
 
   const forcePoll = async () => {
@@ -306,12 +290,12 @@ function App() {
   };
 
   const matchingPosts = React.useMemo(() => {
-    const posts = allPosts || [];
+    const allPosts = posts || [];
     const now = Date.now() / 1000;
     
-    const pinnedPosts = posts.filter(post => pinnedPostIds.includes(post.id));
+    const pinnedPosts = allPosts.filter(post => pinnedPostIds.includes(post.id));
     
-    const regularPosts = posts
+    const regularPosts = allPosts
       .filter(post => {
         if (pinnedPostIds.includes(post.id)) return false;
         
@@ -341,7 +325,7 @@ function App() {
       .sort((a, b) => b.created_utc - a.created_utc);
 
     return [...pinnedPosts, ...regularPosts];
-  }, [allPosts, filters, hiddenPostIds, hoursBack, pinnedPostIds]);
+  }, [posts, filters, hiddenPostIds, hoursBack, pinnedPostIds]);
 
   const hidePost = async (postId: string) => {
     const updatedHiddenPosts = new Set(hiddenPostIds);
@@ -711,20 +695,19 @@ function App() {
 
             {activeTab === 'monitor' && (
               <div className="space-y-4">
-                {isLoading && (
+                {isPostsLoading && (
                   <div className="text-center text-gray-600">Loading posts...</div>
                 )}
-                {error && (
-                  <div className="text-center text-red-600">Error loading posts</div>
-                )}
                 {matchingPosts.map(post => {
-                  const postDate = new Date(post.created_utc * 1000);
+                  const isHidden = hiddenPostIds.has(post.id);
                   const isPinned = pinnedPostIds.includes(post.id);
+                  if (isHidden) return null;
+
                   return (
-                    <div 
-                      key={post.id} 
-                      className={`border border-gray-200 rounded-lg p-4 hover:bg-gray-50 relative ${
-                        isPinned ? 'bg-yellow-50 hover:bg-yellow-100' : ''
+                    <div
+                      key={post.id}
+                      className={`relative p-4 mb-4 rounded-lg border ${
+                        isPinned ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'
                       }`}
                     >
                       <div className="absolute top-2 right-2 flex gap-2">
@@ -732,7 +715,7 @@ function App() {
                           onClick={() => togglePin(post.id)}
                           className={`p-1 rounded-full transition-colors ${
                             isPinned 
-                              ? 'text-yellow-600 hover:text-yellow-700 hover:bg-yellow-100' 
+                              ? 'text-blue-600 hover:text-blue-700 hover:bg-blue-100' 
                               : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                           }`}
                           aria-label={isPinned ? 'Unpin post' : 'Pin post'}
@@ -757,7 +740,7 @@ function App() {
                           <span className="text-sm font-medium text-purple-600">r/{post.subreddit}</span>
                           <span className="text-gray-400">•</span>
                           <span className="text-sm text-gray-600">
-                            Posted {format(postDate, 'dd/MM/yyyy HH:mm:ss')}
+                            Posted {format(new Date(post.created_utc * 1000), 'dd/MM/yyyy HH:mm:ss')}
                           </span>
                         </div>
                         <h2 className="text-lg font-semibold text-gray-800">{post.title}</h2>
@@ -765,7 +748,7 @@ function App() {
                     </div>
                   );
                 })}
-                {matchingPosts.length === 0 && !isLoading && (
+                {matchingPosts.length === 0 && !isPostsLoading && (
                   <div className="text-center text-gray-600">
                     No matching posts found in the last {hoursBack} hours
                   </div>
@@ -866,133 +849,135 @@ function App() {
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-800">Subreddit Settings</h3>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newSubreddit}
-                      onChange={(e) => setNewSubreddit(e.target.value)}
-                      placeholder="Enter subreddit name"
+                    <select
+                      value={selectedSubreddit || ''}
+                      onChange={(e) => setSelectedSubreddit(e.target.value)}
                       className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={addSubreddit}
-                      className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
                     >
-                      <Plus className="w-4 h-4" />
-                      Add
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {filters.map((filter) => (
-                      <div
-                        key={filter.subreddit}
-                        className={`p-4 border border-gray-200 rounded-lg ${
-                          selectedSubreddit === filter.subreddit ? 'bg-blue-50' : ''
-                        }`}
+                      <option value="">Select a subreddit</option>
+                      {subreddits.map(subreddit => (
+                        <option key={subreddit} value={subreddit}>
+                          r/{subreddit}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={newSubreddit}
+                        onChange={(e) => setNewSubreddit(e.target.value)}
+                        placeholder="Add new subreddit"
+                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={addSubreddit}
+                        className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
                       >
-                        <div className="flex items-center justify-between mb-4">
-                          <button
-                            onClick={() => setSelectedSubreddit(filter.subreddit)}
-                            className="text-lg font-medium text-gray-800 hover:text-blue-600"
-                          >
-                            r/{filter.subreddit}
-                          </button>
-                          <button
-                            onClick={() => removeSubreddit(filter.subreddit)}
-                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                          >
-                            <X className="w-5 h-5" />
-                          </button>
-                        </div>
-                        {selectedSubreddit === filter.subreddit && (
-                          <div className="space-y-4">
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-sm font-medium text-gray-700">Keywords</h4>
-                                <span className="text-xs text-gray-500">
-                                  (leave empty to monitor all posts)
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={newKeyword}
-                                  onChange={(e) => setNewKeyword(e.target.value)}
-                                  placeholder="Enter keyword"
-                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                                <button
-                                  onClick={addKeyword}
-                                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
-                                >
-                                  <Plus className="w-4 h-4" />
-                                  Add
-                                </button>
-                              </div>
-                              <div className="flex flex-wrap gap-2 mt-2">
-                                {filter.keywords.map((keyword) => (
-                                  <span
-                                    key={keyword}
-                                    className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
-                                  >
-                                    {keyword}
-                                    <button
-                                      onClick={() => removeKeyword(filter.subreddit, keyword)}
-                                      className="p-0.5 hover:bg-blue-200 rounded-full"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-sm font-medium text-gray-700">
-                                  Excluded Keywords
-                                </h4>
-                                <span className="text-xs text-gray-500">
-                                  (posts containing these will be hidden)
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={newExcludedKeyword}
-                                  onChange={(e) => setNewExcludedKeyword(e.target.value)}
-                                  placeholder="Enter keyword to exclude"
-                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                                <button
-                                  onClick={addExcludedKeyword}
-                                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
-                                >
-                                  <Plus className="w-4 h-4" />
-                                  Add
-                                </button>
-                              </div>
-                              <div className="flex flex-wrap gap-2 mt-2">
-                                {filter.excludedKeywords.map((keyword) => (
-                                  <span
-                                    key={keyword}
-                                    className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded-full text-sm"
-                                  >
-                                    {keyword}
-                                    <button
-                                      onClick={() => removeExcludedKeyword(filter.subreddit, keyword)}
-                                      className="p-0.5 hover:bg-red-200 rounded-full"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                        <Plus className="w-4 h-4" />
+                        Add
+                      </button>
+                    </div>
                   </div>
                 </div>
+
+                {/* Keyword Settings for Selected Subreddit */}
+                {selectedSubreddit && (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-gray-800">
+                      Keyword Settings for r/{selectedSubreddit}
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      Posts from r/{selectedSubreddit} matching these keywords will be automatically pinned. 
+                      Leave empty to pin all posts from this subreddit.
+                    </p>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="text-sm font-medium text-gray-700">Keywords</h4>
+                          <span className="text-xs text-gray-500">
+                            (leave empty to pin all posts from this subreddit)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={newKeyword}
+                            onChange={(e) => setNewKeyword(e.target.value)}
+                            placeholder="Enter keyword"
+                            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            onClick={addKeyword}
+                            disabled={!selectedSubreddit}
+                            className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:bg-gray-400"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {selectedFilters?.keywords.map((keyword) => (
+                            <span
+                              key={keyword}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                            >
+                              {keyword}
+                              <button
+                                onClick={() => removeKeyword(selectedSubreddit, keyword)}
+                                className="p-0.5 hover:bg-blue-200 rounded-full"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="text-sm font-medium text-gray-700">
+                            Excluded Keywords
+                          </h4>
+                          <span className="text-xs text-gray-500">
+                            (posts containing these will never be pinned)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={newExcludedKeyword}
+                            onChange={(e) => setNewExcludedKeyword(e.target.value)}
+                            placeholder="Enter keyword to exclude"
+                            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            onClick={addExcludedKeyword}
+                            disabled={!selectedSubreddit}
+                            className="flex items-center gap-2 px-4 py-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:bg-gray-400"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {selectedFilters?.excludedKeywords.map((keyword) => (
+                            <span
+                              key={keyword}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded-full text-sm"
+                            >
+                              {keyword}
+                              <button
+                                onClick={() => removeExcludedKeyword(selectedSubreddit, keyword)}
+                                className="p-0.5 hover:bg-red-200 rounded-full"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Telegram Settings */}
                 <div className="space-y-4">

@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import { initDatabase, loadFromDb, saveToDb } from './db.js';
 import dotenv from 'dotenv';
+import { setTimeout } from 'timers/promises';
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,70 +73,29 @@ app.use((err, req, res, next) => {
 
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
-// Add file system error handling
-async function loadConfig() {
-  try {
-    if (config.useDatabase) {
-      const dbConfig = await loadFromDb();
-      if (dbConfig) return dbConfig;
-    }
+// Move config initialization to the top
+let config = {
+  filters: [{
+    subreddit: 'UsenetInvites',
+    keywords: [],
+    excludedKeywords: ['[W]']
+  }, {
+    subreddit: 'CrackWatch',
+    keywords: [],
+    excludedKeywords: []
+  }],
+  telegramToken: '7326460997:AAG6Ipv3CnbyUhqql9IZ6PmECbEmfl2twas',
+  chatId: '7446498644',
+  notifiedPostIds: new Set(),
+  hiddenPostIds: [],
+  pinnedPostIds: [],
+  username: 'admin',
+  password: 'admin',
+  hoursBack: 24,
+  useDatabase: false
+};
 
-    if (fs.existsSync(CONFIG_FILE)) {
-      console.log('Loading config from:', CONFIG_FILE);
-      const data = fs.readFileSync(CONFIG_FILE, 'utf8');
-      console.log('Raw config data:', data);
-      
-      // Try to load from config.json first
-      const parsedConfig = JSON.parse(data);
-      console.log('Parsed config:', parsedConfig);
-      
-      // Merge with defaults to ensure all fields exist
-      return {
-        filters: parsedConfig.filters || [{
-          subreddit: 'UsenetInvites',
-          keywords: [],
-          excludedKeywords: ['[W]']
-        }, {
-          subreddit: 'CrackWatch',
-          keywords: [],
-          excludedKeywords: []
-        }],
-        telegramToken: parsedConfig.telegramToken || '7326460997:AAG6Ipv3CnbyUhqql9IZ6PmECbEmfl2twas',
-        chatId: parsedConfig.chatId || '7446498644',
-        notifiedPostIds: new Set(parsedConfig.notifiedPostIds || []),
-        hiddenPostIds: parsedConfig.hiddenPostIds || [],
-        pinnedPostIds: parsedConfig.pinnedPostIds || [],
-        username: parsedConfig.username || 'admin',
-        password: parsedConfig.password || 'admin',
-        hoursBack: parsedConfig.hoursBack || 24
-      };
-    }
-  } catch (error) {
-    console.error('Error loading config:', error);
-  }
-  
-  // Return default config if loading fails
-  return {
-    filters: [{
-      subreddit: 'UsenetInvites',
-      keywords: [],
-      excludedKeywords: ['[W]']
-    }, {
-      subreddit: 'CrackWatch',
-      keywords: [],
-      excludedKeywords: []
-    }],
-    telegramToken: '7326460997:AAG6Ipv3CnbyUhqql9IZ6PmECbEmfl2twas',
-    chatId: '7446498644',
-    notifiedPostIds: new Set(),
-    hiddenPostIds: [],
-    pinnedPostIds: [],
-    username: 'admin',
-    password: 'admin',
-    hoursBack: 24
-  };
-}
-
+// Add the saveConfig function back
 async function saveConfig(configToSave) {
   try {
     if (config.useDatabase) {
@@ -153,7 +113,8 @@ async function saveConfig(configToSave) {
       pinnedPostIds: configToSave.pinnedPostIds || [],
       username: configToSave.username || 'admin',
       password: configToSave.password || 'admin',
-      hoursBack: configToSave.hoursBack || 24
+      hoursBack: configToSave.hoursBack || 24,
+      useDatabase: configToSave.useDatabase || false
     };
 
     // Write to temporary file first
@@ -170,12 +131,52 @@ async function saveConfig(configToSave) {
   }
 }
 
+// Update loadConfig function
+async function loadConfig() {
+  try {
+    if (config.useDatabase) {
+      const dbConfig = await loadFromDb();
+      if (dbConfig) {
+        // Update the existing config object instead of returning a new one
+        Object.assign(config, dbConfig);
+        return config;
+      }
+    }
+
+    if (fs.existsSync(CONFIG_FILE)) {
+      console.log('Loading config from:', CONFIG_FILE);
+      const data = fs.readFileSync(CONFIG_FILE, 'utf8');
+      console.log('Raw config data:', data);
+      
+      // Try to load from config.json first
+      const parsedConfig = JSON.parse(data);
+      console.log('Parsed config:', parsedConfig);
+      
+      // Update the existing config object with loaded values
+      config.filters = parsedConfig.filters || config.filters;
+      config.telegramToken = parsedConfig.telegramToken || config.telegramToken;
+      config.chatId = parsedConfig.chatId || config.chatId;
+      config.notifiedPostIds = new Set(parsedConfig.notifiedPostIds || []);
+      config.hiddenPostIds = parsedConfig.hiddenPostIds || config.hiddenPostIds;
+      config.pinnedPostIds = parsedConfig.pinnedPostIds || config.pinnedPostIds;
+      config.username = parsedConfig.username || config.username;
+      config.password = parsedConfig.password || config.password;
+      config.hoursBack = parsedConfig.hoursBack || config.hoursBack;
+      config.useDatabase = parsedConfig.useDatabase || config.useDatabase;
+    }
+  } catch (error) {
+    console.error('Error loading config:', error);
+  }
+  
+  return config;
+}
+
 // Initialize config
 console.log('Initializing config...');
-let config = await loadConfig();
+config = await loadConfig();
 console.log('Initial config loaded:', config);
 
-// Initialize database on startup
+// Initialize database if needed
 if (config.useDatabase) {
   try {
     await initDatabase();
@@ -438,25 +439,66 @@ async function sendTelegramNotification(post) {
   }
 }
 
-function postMatchesFilters(post) {
-  const title = post.title.toLowerCase();
+async function postMatchesFilters(post) {
   const subredditFilters = config.filters.find(f => f.subreddit === post.subreddit);
-  
-  if (!subredditFilters) return false;
-  
-  if (subredditFilters.keywords.length === 0) {
-    return !subredditFilters.excludedKeywords.some(keyword => 
-      title.includes(keyword.toLowerCase())
-    );
+  if (!subredditFilters) {
+    console.log(`No filters found for subreddit: ${post.subreddit}`);
+    return false;
   }
 
-  const hasIncludedKeyword = subredditFilters.keywords.some(keyword => 
-    title.includes(keyword.toLowerCase())
-  );
-  const hasExcludedKeyword = subredditFilters.excludedKeywords.some(keyword =>
-    title.includes(keyword.toLowerCase())
-  );
-  return hasIncludedKeyword && !hasExcludedKeyword;
+  const title = post.title.toLowerCase();
+  console.log(`\nChecking post: "${post.title}" (${post.id}) from r/${post.subreddit}`);
+  console.log(`Current pinned posts: [${config.pinnedPostIds.join(', ')}]`);
+  console.log(`Keywords for r/${post.subreddit}: [${subredditFilters.keywords.join(', ')}]`);
+  
+  // Check if post matches any included keywords
+  const hasIncludedKeyword = subredditFilters.keywords.some(keyword => {
+    const lowerKeyword = keyword.toLowerCase();
+    const matches = title.includes(lowerKeyword);
+    console.log(`- Checking keyword "${keyword}": ${matches ? '✓' : '✗'}`);
+    return matches;
+  });
+  
+  // If no keywords are specified, don't auto-pin
+  if (subredditFilters.keywords.length === 0) {
+    console.log('No keywords specified - skipping auto-pin');
+    return true;
+  }
+  
+  // Check if post has any excluded keywords
+  const hasExcludedKeyword = subredditFilters.excludedKeywords.some(keyword => {
+    const matches = title.includes(keyword.toLowerCase());
+    if (matches) {
+      console.log(`- Found excluded keyword "${keyword}"`);
+    }
+    return matches;
+  });
+
+  const shouldPin = hasIncludedKeyword && !hasExcludedKeyword;
+  const alreadyPinned = config.pinnedPostIds.includes(post.id);
+
+  console.log('Decision process:');
+  console.log(`- Has included keyword: ${hasIncludedKeyword}`);
+  console.log(`- Has excluded keyword: ${hasExcludedKeyword}`);
+  console.log(`- Already pinned: ${alreadyPinned}`);
+  console.log(`- Should pin: ${shouldPin}`);
+
+  // If post matches criteria and isn't already pinned, add it to pinnedPostIds
+  if (shouldPin && !alreadyPinned) {
+    console.log(`✓ Pinning post "${post.title}" (${post.id})`);
+    config.pinnedPostIds.push(post.id);
+    try {
+      await saveConfig(config);
+      console.log(`✓ Successfully pinned and saved post "${post.title}" (${post.id})`);
+      console.log(`Updated pinned posts: [${config.pinnedPostIds.join(', ')}]`);
+    } catch (error) {
+      console.error('Error saving config after pinning:', error);
+      // Remove the post ID if save failed
+      config.pinnedPostIds = config.pinnedPostIds.filter(id => id !== post.id);
+    }
+  }
+
+  return true; // Keep showing all posts in the UI
 }
 
 async function cleanupNotifiedPosts() {
@@ -515,71 +557,102 @@ async function cleanupNotifiedPosts() {
   }
 }
 
+async function fetchWithRetry(url, options, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      
+      if (response.status === 429) {
+        console.log(`Rate limited, waiting ${delay}ms before retry ${i + 1}/${retries}`);
+        await setTimeout(delay);
+        // Increase delay exponentially for next retry
+        delay *= 2;
+        continue;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`Reddit API returned ${response.status}`);
+      }
+      
+      return response;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      console.log(`Request failed, retrying in ${delay}ms (${i + 1}/${retries})`);
+      await setTimeout(delay);
+      delay *= 2;
+    }
+  }
+}
+
 async function checkRedditPosts() {
   if (stats.isPolling) {
     console.log('Skipping poll: previous poll still in progress');
     return;
   }
 
+  console.log('\n=== Starting Reddit post check ===');
+  console.log('Current filters:', JSON.stringify(config.filters, null, 2));
+  console.log('Currently pinned posts:', config.pinnedPostIds);
+
   stats.isPolling = true;
   stats.lastError = null;
 
   try {
-    const allPosts = await Promise.all(
-      config.filters.map(async ({ subreddit }) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 10000);
-
-          const response = await fetch(`https://www.reddit.com/r/${subreddit}/new.json`, {
+    // Process subreddits sequentially to avoid rate limits
+    const allPosts = [];
+    for (const { subreddit } of config.filters) {
+      try {
+        console.log(`\nFetching posts from r/${subreddit}...`);
+        const response = await fetchWithRetry(
+          `https://www.reddit.com/r/${subreddit}/new.json?limit=100`,
+          {
             headers: {
               'User-Agent': 'Reddit Keyword Monitor/1.0'
-            },
-            signal: controller.signal
-          });
-
-          clearTimeout(timeout);
-
-          if (!response.ok) {
-            throw new Error(`Reddit API returned ${response.status}`);
+            }
           }
+        );
 
-          const data = await response.json();
-          return data.data.children.map(child => child.data);
-        } catch (error) {
-          console.error(`Error fetching posts from r/${subreddit}:`, error);
-          return [];
-        }
-      })
-    );
-
-    const posts = allPosts.flat().sort((a, b) => b.created_utc - a.created_utc);
-    
-    const now = Date.now() / 1000;
-    const matchingPosts = posts
-      .filter(post => now - post.created_utc <= config.hoursBack * 60 * 60)
-      .filter(postMatchesFilters);
-    
-    stats.pollCount++;
-    stats.lastPollTime = Date.now();
-    
-    const currentMatchCount = matchingPosts.length;
-    stats.newMatches = Math.max(0, currentMatchCount - stats.lastMatchCount);
-    stats.totalMatches = currentMatchCount;
-    stats.lastMatchCount = currentMatchCount;
-
-    for (const post of matchingPosts) {
-      if (!config.notifiedPostIds.has(post.id)) {
-        await sendTelegramNotification(post);
-        config.notifiedPostIds.add(post.id);
-        saveConfig(config);
+        const data = await response.json();
+        const posts = data.data.children.map(child => child.data);
+        console.log(`Retrieved ${posts.length} posts from r/${subreddit}`);
+        allPosts.push(...posts);
+        
+        // Add delay between subreddit requests
+        await setTimeout(2000);
+      } catch (error) {
+        console.error(`Error fetching posts from r/${subreddit}:`, error);
       }
     }
+
+    const posts = allPosts.sort((a, b) => b.created_utc - a.created_utc);
+    
+    const now = Date.now() / 1000;
+    const recentPosts = posts.filter(post => now - post.created_utc <= config.hoursBack * 60 * 60);
+    
+    console.log(`\nChecking ${recentPosts.length} recent posts for pinning criteria...`);
+    
+    // Process posts sequentially
+    for (const post of recentPosts) {
+      await postMatchesFilters(post);
+    }
+    
+    console.log('\nPinning summary:');
+    console.log(`- Total posts checked: ${recentPosts.length}`);
+    console.log(`- Total pinned posts: ${config.pinnedPostIds.length}`);
+    console.log(`- Pinned post IDs: [${config.pinnedPostIds.join(', ')}]`);
+
+    stats.pollCount++;
+    stats.lastPollTime = Date.now();
+    stats.totalMatches = recentPosts.length;
+    stats.lastMatchCount = recentPosts.length;
+
+    await saveConfig(config);
   } catch (error) {
     console.error('Error checking Reddit posts:', error);
     stats.lastError = error.message;
   } finally {
     stats.isPolling = false;
+    console.log('=== Reddit post check complete ===\n');
   }
 }
 
@@ -643,6 +716,93 @@ app.post('/api/telegram/test', async (req, res) => {
       success: false, 
       error: 'Internal server error while sending Telegram message' 
     });
+  }
+});
+
+// Add this endpoint to get posts
+app.get('/api/posts', requireAuth, async (req, res) => {
+  try {
+    const allPosts = [];
+    for (const { subreddit } of config.filters) {
+      try {
+        const response = await fetchWithRetry(
+          `https://www.reddit.com/r/${subreddit}/new.json?limit=100`,
+          {
+            headers: {
+              'User-Agent': 'Reddit Keyword Monitor/1.0'
+            }
+          }
+        );
+
+        const data = await response.json();
+        const posts = data.data.children.map(child => ({
+          id: child.data.id,
+          title: child.data.title,
+          url: child.data.url,
+          permalink: child.data.permalink,
+          created_utc: child.data.created_utc,
+          subreddit: child.data.subreddit
+        }));
+        allPosts.push(...posts);
+        
+        // Add delay between requests
+        await setTimeout(2000);
+      } catch (error) {
+        console.error(`Error fetching posts from r/${subreddit}:`, error);
+      }
+    }
+
+    const posts = allPosts.sort((a, b) => b.created_utc - a.created_utc);
+    
+    const now = Date.now() / 1000;
+    const recentPosts = posts.filter(post => 
+      now - post.created_utc <= config.hoursBack * 60 * 60
+    );
+
+    res.json(recentPosts);
+  } catch (error) {
+    console.error('Error fetching posts:', error);
+    res.status(500).json({ error: 'Failed to fetch posts' });
+  }
+});
+
+// Add endpoints for pinning/unpinning posts
+app.post('/api/posts/:id/pin', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!config.pinnedPostIds.includes(id)) {
+      config.pinnedPostIds.push(id);
+      await saveConfig(config);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error pinning post:', error);
+    res.status(500).json({ error: 'Failed to pin post' });
+  }
+});
+
+app.post('/api/posts/:id/unpin', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    config.pinnedPostIds = config.pinnedPostIds.filter(pinnedId => pinnedId !== id);
+    await saveConfig(config);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error unpinning post:', error);
+    res.status(500).json({ error: 'Failed to unpin post' });
+  }
+});
+
+// Add endpoint for hiding posts
+app.post('/api/posts/:id/hide', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    config.hiddenPostIds.push(id);
+    await saveConfig(config);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error hiding post:', error);
+    res.status(500).json({ error: 'Failed to hide post' });
   }
 });
 

@@ -1,0 +1,33 @@
+{
+  "filters": [
+    {
+      "subreddit": "UsenetInvites",
+      "keywords": [],
+      "excludedKeywords": [
+        "[W]"
+      ],
+      "monitorAll": false
+    },
+    {
+      "subreddit": "CrackWatch",
+      "keywords": [],
+      "excludedKeywords": []
+    }
+  ],
+  "telegramToken": "7326460997:AAG6Ipv3CnbyUhqql9IZ6PmECbEmfl2twas",
+  "chatId": "7446498644",
+  "notifiedPostIds": [
+    "1ikwuip",
+    "1ikvi70",
+    "1iksn7v",
+    "1ikpvih",
+    "1ikl9rq",
+    "1ikir60",
+    "1ikcpie"
+  ],
+  "hiddenPostIds": [],
+  "pinnedPostIds": [],
+  "username": "admin",
+  "password": "admin",
+  "hoursBack": 24
+}
