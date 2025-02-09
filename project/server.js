@@ -9,6 +9,8 @@ import { networkInterfaces } from 'os';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import { initDatabase, loadFromDb, saveToDb } from './db.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,8 +49,17 @@ app.use(session({
 }));
 
 app.use(cors({
-  origin: ['http://192.168.0.100:5173', 'http://localhost:5173'],
-  credentials: true
+  origin: [
+    'http://192.168.0.100:5173',
+    'http://192.168.0.100:80',
+    'http://192.168.0.100',
+    'http://localhost:5173',
+    'http://localhost:80',
+    'http://localhost'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 
 app.use(express.json());
@@ -636,7 +647,7 @@ app.post('/api/telegram/test', async (req, res) => {
 });
 
 // Start the server
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.SERVER_PORT || 3001;
 const server = app.listen(PORT, LOCAL_IP, () => {
   console.log(`Server running on http://${LOCAL_IP}:${PORT}`);
   checkRedditPosts();
