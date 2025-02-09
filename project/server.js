@@ -7,6 +7,7 @@ import fetch from 'node-fetch';
 import { format } from 'date-fns';
 import { networkInterfaces } from 'os';
 import cookieParser from 'cookie-parser';
+import session from 'express-session';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,12 +31,26 @@ const LOCAL_IP = getLocalIP();
 console.log(`Local IP address: ${LOCAL_IP}`);
 
 const app = express();
+
+// Configure middleware
+app.use(cookieParser());
+app.use(session({
+  secret: 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false,
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000
+  }
+}));
+
 app.use(cors({
-  origin: true,
+  origin: ['http://192.168.0.100:5173', 'http://localhost:5173'],
   credentials: true
 }));
+
 app.use(express.json());
-app.use(cookieParser());
 
 // Add error handling middleware
 app.use((err, req, res, next) => {
@@ -551,6 +566,55 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// Add the Telegram test endpoint
+app.post('/api/telegram/test', async (req, res) => {
+  try {
+    const { telegramToken, chatId } = req.body;
+
+    if (!telegramToken || !chatId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required parameters' 
+      });
+    }
+
+    // Create test message
+    const message = `🔔 Test notification from Reddit Keyword Monitor\n\n` +
+      `If you received this message, your Telegram notifications are working correctly!\n\n` +
+      `Time: ${new Date().toISOString()}`;
+
+    const response = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        disable_web_page_preview: false,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      res.json({ success: true });
+    } else {
+      res.json({ 
+        success: false, 
+        error: data.description || 'Failed to send Telegram message' 
+      });
+    }
+  } catch (error) {
+    console.error('Error sending Telegram test message:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error while sending Telegram message' 
+    });
+  }
+});
+
+// Start the server
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, LOCAL_IP, () => {
   console.log(`Server running on http://${LOCAL_IP}:${PORT}`);
@@ -560,3 +624,5 @@ const server = app.listen(PORT, LOCAL_IP, () => {
 });
 
 server.timeout = 30000;
+
+export default app;

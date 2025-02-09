@@ -3,7 +3,7 @@ import { Bell, Search, Settings, Plus, Minus, Save, X, Eye, RefreshCw, Download,
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 
-// In browser environment, we'll use window.location.hostname
+// Update the API_URL to use the correct port
 const API_URL = `http://${window.location.hostname}:3001`;
 
 const fetchConfig = {
@@ -577,36 +577,22 @@ function App() {
       return;
     }
 
-    const topPost = allPosts?.[0];
-    const postDate = topPost ? new Date(topPost.created_utc * 1000) : new Date();
-    const message = topPost 
-      ? `🔔 Test notification from Reddit Keyword Monitor\n\n` +
-        `Latest post from r/${topPost.subreddit}:\n` +
-        `${topPost.title}\n` +
-        `Posted: ${format(postDate, 'dd/MM/yyyy HH:mm:ss')}\n` +
-        `Link: https://reddit.com${topPost.permalink}\n\n` +
-        `If you received this message, your Telegram notifications are working correctly!`
-      : '🔔 Test notification from Reddit Keyword Monitor\n\n' +
-        'No recent posts found.\n\n' +
-        'If you received this message, your Telegram notifications are working correctly!';
-
     setTestStatus('loading');
     try {
-      const response = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+      const response = await fetch(`${API_URL}/api/telegram/test`, {
         ...fetchConfig,
         method: 'POST',
         body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          disable_web_page_preview: false,
+          telegramToken,
+          chatId
         }),
       });
 
       const data = await response.json();
-      if (data.ok) {
+      if (data.success) {
         setTestStatus('success');
       } else {
-        throw new Error(data.description || 'Failed to send test message');
+        throw new Error(data.error || 'Failed to send test message');
       }
     } catch (error) {
       setTestStatus('error');
