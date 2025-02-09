@@ -39,6 +39,7 @@ interface Config {
   username: string;
   password: string;
   pinnedPostIds: string[];
+  useDatabase: boolean;
 }
 
 // Login page component
@@ -173,6 +174,7 @@ function App() {
   const [hoursBack, setHoursBack] = useState(24);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [useDatabase, setUseDatabase] = useState(false);
 
   // Check authentication status on mount
   useEffect(() => {
@@ -228,6 +230,7 @@ function App() {
       setHoursBack(serverConfig.hoursBack || 24);
       setUsername(serverConfig.username || '');
       setPassword(serverConfig.password || '');
+      setUseDatabase(serverConfig.useDatabase || false);
       
       if (updatedFilters.length > 0) {
         setSelectedSubreddit(updatedFilters[0].subreddit);
@@ -1062,6 +1065,30 @@ function App() {
                       />
                       <span className="text-sm text-gray-600">hours</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Storage Settings */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Storage Settings</h3>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="useDatabase"
+                      checked={useDatabase}
+                      onChange={(e) => {
+                        setUseDatabase(e.target.checked);
+                        fetch(`${API_URL}/api/config`, {
+                          ...fetchConfig,
+                          method: 'POST',
+                          body: JSON.stringify({ useDatabase: e.target.checked }),
+                        });
+                      }}
+                      className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    />
+                    <label htmlFor="useDatabase" className="text-sm text-gray-700">
+                      Use PostgreSQL Database (requires restart)
+                    </label>
                   </div>
                 </div>
               </div>

@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { networkInterfaces } from 'os';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
+import { initDatabase, loadFromDb, saveToDb } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,8 +62,13 @@ app.use((err, req, res, next) => {
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // Add file system error handling
-function loadConfig() {
+async function loadConfig() {
   try {
+    if (config.useDatabase) {
+      const dbConfig = await loadFromDb();
+      if (dbConfig) return dbConfig;
+    }
+
     if (fs.existsSync(CONFIG_FILE)) {
       console.log('Loading config from:', CONFIG_FILE);
       const data = fs.readFileSync(CONFIG_FILE, 'utf8');
@@ -119,8 +125,13 @@ function loadConfig() {
   };
 }
 
-function saveConfig(configToSave) {
+async function saveConfig(configToSave) {
   try {
+    if (config.useDatabase) {
+      await saveToDb(configToSave);
+      return true;
+    }
+
     console.log('Saving config:', configToSave);
     const sanitizedConfig = {
       filters: configToSave.filters || [],
@@ -150,8 +161,18 @@ function saveConfig(configToSave) {
 
 // Initialize config
 console.log('Initializing config...');
-let config = loadConfig();
+let config = await loadConfig();
 console.log('Initial config loaded:', config);
+
+// Initialize database on startup
+if (config.useDatabase) {
+  try {
+    await initDatabase();
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    process.exit(1);
+  }
+}
 
 let stats = {
   pollCount: 0,
