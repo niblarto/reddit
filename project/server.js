@@ -259,38 +259,53 @@ app.get('/api/config', (req, res) => {
 
 app.get('/api/reddit/:subreddit', async (req, res) => {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const { subreddit } = req.params;
+    console.log(`Fetching posts from r/${subreddit}...`);
 
-    const response = await fetch(`https://www.reddit.com/r/${req.params.subreddit}/new.json`, {
-      headers: {
-        'User-Agent': 'Reddit Keyword Monitor/1.0'
-      },
-      signal: controller.signal
-    });
+    const response = await fetch(
+      `https://www.reddit.com/r/${subreddit}/new.json?limit=100`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      }
+    );
 
-    clearTimeout(timeout);
-    
     if (!response.ok) {
-      throw new Error(`Reddit API returned ${response.status}`);
+      console.error(`Reddit API error for r/${subreddit}:`, response.status);
+      return res.status(response.status).json({ 
+        error: `Reddit API returned ${response.status}` 
+      });
     }
 
     const data = await response.json();
     
-    const posts = data.data.children.map(child => child.data);
-    posts.sort((a, b) => b.created_utc - a.created_utc);
-    
-    res.json({
-      ...data,
-      data: {
-        ...data.data,
-        children: posts.map(post => ({ data: post }))
-      }
-    });
+    // Validate the response structure
+    if (!data || !data.data || !Array.isArray(data.data.children)) {
+      console.error(`Invalid response structure for r/${subreddit}:`, data);
+      return res.status(500).json({ 
+        error: 'Invalid response from Reddit',
+        data 
+      });
+    }
+
+    const posts = data.data.children.map(child => ({
+      id: child.data.id,
+      title: child.data.title,
+      url: `https://reddit.com${child.data.permalink}`,
+      created_utc: child.data.created_utc,
+      subreddit: child.data.subreddit,
+      author: child.data.author
+    }));
+
+    console.log(`Successfully fetched ${posts.length} posts from r/${subreddit}`);
+    res.json(posts);
   } catch (error) {
-    console.error('Error fetching from Reddit:', error);
-    res.status(error.name === 'AbortError' ? 408 : 500)
-       .json({ error: 'Failed to fetch from Reddit' });
+    console.error(`Error fetching r/${subreddit}:`, error);
+    res.status(500).json({ 
+      error: 'Failed to fetch posts',
+      message: error.message 
+    });
   }
 });
 

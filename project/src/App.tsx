@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Bell, Search, Settings, Plus, Minus, Save, X, Eye, RefreshCw, Download, Upload, Clock, Lock, Pin, PinOff } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
+import { toast } from 'react-hot-toast';
 
 // Update the API_URL to use the correct port
 const API_URL = `http://${window.location.hostname}:3001`;
@@ -40,6 +41,7 @@ interface Config {
   password: string;
   pinnedPostIds: string[];
   useDatabase: boolean;
+  notifiedPostIds: Set<string>;
 }
 
 // Login page component
@@ -136,19 +138,25 @@ function App() {
   const [activeTab, setActiveTab] = useState<'monitor' | 'settings'>('monitor');
   const [isPolling, setIsPolling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   
-  const { data: serverConfig, isLoading: isConfigLoading } = useQuery({
+  const { data: config, isLoading: isLoadingConfig } = useQuery({
     queryKey: ['config'],
     queryFn: async () => {
-      const response = await fetch(`${API_URL}/api/config`, fetchConfig);
-      if (!response.ok) {
-        throw new Error('Failed to load config');
-      }
-      return response.json() as Promise<Config>;
+      const response = await fetch(`${API_URL}/api/config`, {
+        credentials: 'include',
+        headers: fetchConfig.headers
+      });
+      if (!response.ok) throw new Error('Failed to fetch config');
+      const data = await response.json();
+      return {
+        ...data,
+        notifiedPostIds: new Set(data.notifiedPostIds || []),
+        hiddenPostIds: new Set(data.hiddenPostIds || [])
+      };
     },
-    retry: false
+    enabled: isAuthenticated
   });
 
   const { data: stats = { pollCount: 0, totalMatches: 0, newMatches: 0, nextPollIn: 0 }, refetch: refetchStats } = useQuery({
@@ -215,58 +223,98 @@ function App() {
   };
 
   useEffect(() => {
-    if (serverConfig) {
-      const updatedFilters = (serverConfig.filters || []).map(filter => ({
+    if (config) {
+      const updatedFilters = (config.filters || []).map(filter => ({
         ...filter,
         keywords: filter.keywords || [],
         excludedKeywords: filter.excludedKeywords || []
       }));
       
       setFilters(updatedFilters);
-      setTelegramToken(serverConfig.telegramToken || '');
-      setChatId(serverConfig.chatId || '');
-      setHiddenPostIds(new Set(serverConfig.hiddenPostIds || []));
-      setPinnedPostIds(serverConfig.pinnedPostIds || []);
-      setHoursBack(serverConfig.hoursBack || 24);
-      setUsername(serverConfig.username || '');
-      setPassword(serverConfig.password || '');
-      setUseDatabase(serverConfig.useDatabase || false);
+      setTelegramToken(config.telegramToken || '');
+      setChatId(config.chatId || '');
+      setHiddenPostIds(new Set(config.hiddenPostIds || []));
+      setPinnedPostIds(config.pinnedPostIds || []);
+      setHoursBack(config.hoursBack || 24);
+      setUsername(config.username || '');
+      setPassword(config.password || '');
+      setUseDatabase(config.useDatabase || false);
       
       if (updatedFilters.length > 0) {
         setSelectedSubreddit(updatedFilters[0].subreddit);
       }
     }
-  }, [serverConfig]);
+  }, [config]);
 
   const subreddits = filters.map(f => f.subreddit);
 
-  const { data: allPosts = [], isLoading, error, refetch: refetchPosts } = useQuery({
-    queryKey: ['posts', subreddits],
+  const { data: fetchedPosts = [], isLoading: isLoadingPosts, error: postsError } = useQuery({
+    queryKey: ['posts'],
     queryFn: async () => {
-      if (!subreddits.length) return [];
-      
-      const allPostsData = await Promise.all(
-        subreddits.map(async (subreddit) => {
-          try {
-            const response = await fetch(`${API_URL}/api/reddit/${subreddit}`, fetchConfig);
-            const data = await response.json();
-            return data.data.children.map((child: any) => ({
-              ...child.data,
-              subreddit: child.data.subreddit
-            }));
-          } catch (error) {
-            console.error(`Error fetching posts from r/${subreddit}:`, error);
-            return [];
-          }
-        })
-      );
+      try {
+        const subreddits = config?.filters?.map(f => f.subreddit) || [];
+        
+        const allPosts = await Promise.all(
+          subreddits.map(async (subreddit) => {
+            try {
+              const response = await fetch(`${API_URL}/api/reddit/${subreddit}`, {
+                credentials: 'include',
+                headers: fetchConfig.headers
+              });
+              
+              if (!response.ok) {
+                console.error(`Error fetching posts from r/${subreddit}:`, response.status);
+                return [];
+              }
+              
+              return response.json();
+            } catch (error) {
+              console.error(`Error fetching posts from r/${subreddit}:`, error);
+              return [];
+            }
+          })
+        );
 
-      const posts = allPostsData.flat();
-      return posts.sort((a, b) => b.created_utc - a.created_utc);
+        return allPosts.flat().sort((a, b) => b.created_utc - a.created_utc);
+      } catch (error) {
+        console.error('Error fetching posts:', error);
+        return [];
+      }
     },
-    refetchInterval: 10 * 60 * 1000,
-    enabled: subreddits.length > 0,
+    enabled: !!config?.filters?.length
   });
+
+  const filteredPosts = useMemo(() => {
+    if (!config || !fetchedPosts) return [];
+    
+    return fetchedPosts.filter(post => {
+      if (config.hiddenPostIds.has(post.id)) return false;
+      
+      const subredditFilter = config.filters.find(f => f.subreddit === post.subreddit);
+      if (!subredditFilter) return false;
+
+      const title = post.title.toLowerCase();
+      const hasExcludedKeyword = subredditFilter.excludedKeywords.some(
+        keyword => title.includes(keyword.toLowerCase())
+      );
+      
+      return !hasExcludedKeyword;
+    });
+  }, [fetchedPosts, config]);
+
+  const sortedPosts = useMemo(() => {
+    if (!config || !filteredPosts) return [];
+    
+    return [...filteredPosts].sort((a, b) => {
+      const aPinned = config.pinnedPostIds?.includes(a.id) || false;
+      const bPinned = config.pinnedPostIds?.includes(b.id) || false;
+      
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      
+      return b.created_utc - a.created_utc;
+    });
+  }, [filteredPosts, config]);
 
   const forcePoll = async () => {
     if (isPolling) return;
@@ -304,44 +352,6 @@ function App() {
       console.error('Error toggling pin:', error);
     }
   };
-
-  const matchingPosts = React.useMemo(() => {
-    const posts = allPosts || [];
-    const now = Date.now() / 1000;
-    
-    const pinnedPosts = posts.filter(post => pinnedPostIds.includes(post.id));
-    
-    const regularPosts = posts
-      .filter(post => {
-        if (pinnedPostIds.includes(post.id)) return false;
-        
-        if (now - post.created_utc > hoursBack * 60 * 60) return false;
-        
-        if (hiddenPostIds.has(post.id)) return false;
-        
-        const title = post.title.toLowerCase();
-        const subredditFilters = filters.find(f => f.subreddit === post.subreddit);
-        
-        if (!subredditFilters) return false;
-        
-        if (subredditFilters.keywords.length === 0) {
-          return !subredditFilters.excludedKeywords.some(keyword => 
-            title.includes(keyword.toLowerCase())
-          );
-        }
-
-        const hasIncludedKeyword = subredditFilters.keywords.some(keyword => 
-          title.includes(keyword.toLowerCase())
-        );
-        const hasExcludedKeyword = subredditFilters.excludedKeywords.some(keyword =>
-          title.includes(keyword.toLowerCase())
-        );
-        return hasIncludedKeyword && !hasExcludedKeyword;
-      })
-      .sort((a, b) => b.created_utc - a.created_utc);
-
-    return [...pinnedPosts, ...regularPosts];
-  }, [allPosts, filters, hiddenPostIds, hoursBack, pinnedPostIds]);
 
   const hidePost = async (postId: string) => {
     const updatedHiddenPosts = new Set(hiddenPostIds);
@@ -617,7 +627,7 @@ function App() {
     return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
   }
 
-  if (isConfigLoading) {
+  if (isLoadingConfig || isLoadingPosts) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-gray-600">Loading configuration...</p>
@@ -711,13 +721,13 @@ function App() {
 
             {activeTab === 'monitor' && (
               <div className="space-y-4">
-                {isLoading && (
+                {isLoadingPosts && (
                   <div className="text-center text-gray-600">Loading posts...</div>
                 )}
-                {error && (
+                {postsError && (
                   <div className="text-center text-red-600">Error loading posts</div>
                 )}
-                {matchingPosts.map(post => {
+                {sortedPosts.map(post => {
                   const postDate = new Date(post.created_utc * 1000);
                   const isPinned = pinnedPostIds.includes(post.id);
                   return (
@@ -765,7 +775,7 @@ function App() {
                     </div>
                   );
                 })}
-                {matchingPosts.length === 0 && !isLoading && (
+                {sortedPosts.length === 0 && !isLoadingPosts && (
                   <div className="text-center text-gray-600">
                     No matching posts found in the last {hoursBack} hours
                   </div>
@@ -1094,6 +1104,49 @@ function App() {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto p-4">
+        <div className="mb-4 p-2 bg-gray-100 rounded">
+          <h2 className="font-bold">Debug Info:</h2>
+          <p>Loading: {isLoadingPosts ? 'Yes' : 'No'}</p>
+          <p>Total Posts: {fetchedPosts.length}</p>
+          <p>Filtered Posts: {filteredPosts.length}</p>
+          <p>Sorted Posts: {sortedPosts.length}</p>
+          <p>Subreddits: {config?.filters?.map(f => f.subreddit).join(', ')}</p>
+          {postsError && (
+            <p className="text-red-500">Error: {postsError.message}</p>
+          )}
+        </div>
+
+        <div className="grid gap-4">
+          {sortedPosts.map(post => (
+            <div 
+              key={post.id} 
+              className={`bg-white p-4 rounded-lg shadow ${
+                config?.pinnedPostIds?.includes(post.id) ? 'border-2 border-yellow-400' : ''
+              }`}
+            >
+              <h3 className="font-bold">{post.title}</h3>
+              <p className="text-sm text-gray-600">
+                r/{post.subreddit}
+                {config?.pinnedPostIds?.includes(post.id) && (
+                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                    📌 Pinned
+                  </span>
+                )}
+              </p>
+              <a 
+                href={post.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:text-blue-700"
+              >
+                View Post
+              </a>
+            </div>
+          ))}
         </div>
       </div>
     </div>
