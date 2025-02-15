@@ -444,19 +444,21 @@ function postMatchesFilters(post) {
   
   if (!subredditFilters) return false;
   
-  if (subredditFilters.keywords.length === 0) {
-    return !subredditFilters.excludedKeywords.some(keyword => 
+  // Check if title matches any keywords (if present) and add to pinnedPostIds
+  if (subredditFilters.keywords.length > 0) {
+    const hasIncludedKeyword = subredditFilters.keywords.some(keyword => 
       title.includes(keyword.toLowerCase())
     );
+    if (hasIncludedKeyword && !config.pinnedPostIds.includes(post.id)) {
+      config.pinnedPostIds.push(post.id);
+      saveConfig(config);
+    }
   }
 
-  const hasIncludedKeyword = subredditFilters.keywords.some(keyword => 
+  // Only check excluded keywords for filtering
+  return !subredditFilters.excludedKeywords.some(keyword => 
     title.includes(keyword.toLowerCase())
   );
-  const hasExcludedKeyword = subredditFilters.excludedKeywords.some(keyword =>
-    title.includes(keyword.toLowerCase())
-  );
-  return hasIncludedKeyword && !hasExcludedKeyword;
 }
 
 async function cleanupNotifiedPosts() {
@@ -479,7 +481,24 @@ async function cleanupNotifiedPosts() {
           }
 
           const data = await response.json();
-          return data.data.children.map(child => child.data);
+          const posts = data.data.children.map(child => child.data);
+          
+          // Check for keyword matches in new posts and add to pinnedPostIds
+          posts.forEach(post => {
+            const filter = config.filters.find(f => f.subreddit === post.subreddit);
+            if (filter && filter.keywords.length > 0) {
+              const title = post.title.toLowerCase();
+              const hasIncludedKeyword = filter.keywords.some(keyword => 
+                title.includes(keyword.toLowerCase())
+              );
+              if (hasIncludedKeyword && !config.pinnedPostIds.includes(post.id)) {
+                config.pinnedPostIds.push(post.id);
+                saveConfig(config);
+              }
+            }
+          });
+
+          return posts;
         } catch (error) {
           console.error(`Error fetching posts from r/${subreddit}:`, error);
           return [];
@@ -492,13 +511,8 @@ async function cleanupNotifiedPosts() {
 
     const newNotifiedPostIds = new Set(
       Array.from(config.notifiedPostIds).filter(id => {
-        if (config.pinnedPostIds.includes(id)) {
-          return true;
-        }
-        if (validPosts.has(id)) {
-          return true;
-        }
-        return false;
+        // Keep posts that are either pinned or still valid
+        return config.pinnedPostIds.includes(id) || validPosts.has(id);
       })
     );
 

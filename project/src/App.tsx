@@ -907,9 +907,9 @@ function App() {
                           <div className="space-y-4">
                             <div>
                               <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-sm font-medium text-gray-700">Keywords</h4>
+                                <h4 className="text-sm font-medium text-gray-700">Auto-Pin Keywords</h4>
                                 <span className="text-xs text-gray-500">
-                                  (leave empty to monitor all posts)
+                                  (Posts matching these keywords will be automatically pinned)
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
@@ -951,7 +951,7 @@ function App() {
                                   Excluded Keywords
                                 </h4>
                                 <span className="text-xs text-gray-500">
-                                  (posts containing these will be hidden)
+                                  (Posts containing these keywords will be ignored)
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
