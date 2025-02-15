@@ -267,7 +267,14 @@ function App() {
                 return [];
               }
               
-              return response.json();
+              const posts = await response.json();
+              // Ensure each post has the correct URL format
+              return posts.map(post => ({
+                ...post,
+                url: post.permalink 
+                  ? `https://reddit.com${post.permalink}` 
+                  : `https://reddit.com/r/${post.subreddit}/comments/${post.id}`
+              }));
             } catch (error) {
               console.error(`Error fetching posts from r/${subreddit}:`, error);
               return [];
@@ -758,7 +765,7 @@ function App() {
                         </button>
                       </div>
                       <a
-                        href={`https://reddit.com${post.permalink}`}
+                        href={post.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="block"
@@ -1137,14 +1144,19 @@ function App() {
                   </span>
                 )}
               </p>
-              <a 
-                href={post.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:text-blue-700"
-              >
-                View Post
-              </a>
+              <div className="mt-2 space-x-4">
+                <a 
+                  href={post.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-700"
+                >
+                  View Post
+                </a>
+                <span className="text-gray-500">
+                  by u/{post.author}
+                </span>
+              </div>
             </div>
           ))}
         </div>

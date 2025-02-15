@@ -280,19 +280,10 @@ app.get('/api/reddit/:subreddit', async (req, res) => {
 
     const data = await response.json();
     
-    // Validate the response structure
-    if (!data || !data.data || !Array.isArray(data.data.children)) {
-      console.error(`Invalid response structure for r/${subreddit}:`, data);
-      return res.status(500).json({ 
-        error: 'Invalid response from Reddit',
-        data 
-      });
-    }
-
     const posts = data.data.children.map(child => ({
       id: child.data.id,
       title: child.data.title,
-      url: `https://reddit.com${child.data.permalink}`,
+      permalink: child.data.permalink,
       created_utc: child.data.created_utc,
       subreddit: child.data.subreddit,
       author: child.data.author
