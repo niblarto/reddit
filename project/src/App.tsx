@@ -148,12 +148,16 @@ function App() {
         credentials: 'include',
         headers: fetchConfig.headers
       });
-      if (!response.ok) throw new Error('Failed to fetch config');
+      
+      if (!response.ok) throw new Error('Failed to load configuration');
+      
       const data = await response.json();
       return {
         ...data,
-        notifiedPostIds: new Set(data.notifiedPostIds || []),
-        hiddenPostIds: new Set(data.hiddenPostIds || [])
+        // Convert arrays to Sets
+        pinnedPostIds: new Set(data.pinned_post_ids || []),
+        hiddenPostIds: new Set(data.hidden_post_ids || []),
+        filters: data.filters || []
       };
     },
     enabled: isAuthenticated
@@ -291,21 +295,83 @@ function App() {
     enabled: !!config?.filters?.length
   });
 
+  const handleHidePost = async (postId: string) => {
+    try {
+      const newHiddenPostIds = new Set(config?.hiddenPostIds || []);
+      newHiddenPostIds.add(postId);
+
+      const response = await fetch(`${API_URL}/api/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...fetchConfig.headers
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          filters: config?.filters || [],
+          pinned_post_ids: Array.from(config?.pinnedPostIds || []),
+          hidden_post_ids: Array.from(newHiddenPostIds),
+          hours_back: config?.hoursBack || 24
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update configuration');
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['config'] });
+    } catch (error) {
+      console.error('Error hiding post:', error);
+      toast.error('Failed to hide post');
+    }
+  };
+
+  const handlePinPost = async (postId: string) => {
+    try {
+      const newPinnedPostIds = new Set(config?.pinnedPostIds || []);
+      if (newPinnedPostIds.has(postId)) {
+        newPinnedPostIds.delete(postId);
+      } else {
+        newPinnedPostIds.add(postId);
+      }
+
+      const response = await fetch(`${API_URL}/api/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...fetchConfig.headers
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          filters: config?.filters || [],
+          pinned_post_ids: Array.from(newPinnedPostIds),
+          hidden_post_ids: Array.from(config?.hiddenPostIds || []),
+          hours_back: config?.hoursBack || 24
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update configuration');
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['config'] });
+    } catch (error) {
+      console.error('Error pinning post:', error);
+      toast.error('Failed to pin post');
+    }
+  };
+
   const filteredPosts = useMemo(() => {
     if (!config || !fetchedPosts) return [];
-    
     return fetchedPosts.filter(post => {
-      if (config.hiddenPostIds.has(post.id)) return false;
+      // Skip hidden posts
+      if (config.hiddenPostIds?.has(post.id)) return false;
       
-      const subredditFilter = config.filters.find(f => f.subreddit === post.subreddit);
-      if (!subredditFilter) return false;
-
-      const title = post.title.toLowerCase();
-      const hasExcludedKeyword = subredditFilter.excludedKeywords.some(
-        keyword => title.includes(keyword.toLowerCase())
+      const filter = config.filters.find(f => f.subreddit === post.subreddit);
+      if (!filter) return false;
+      return !filter.excludedKeywords.some(kw => 
+        post.title.toLowerCase().includes(kw.toLowerCase())
       );
-      
-      return !hasExcludedKeyword;
     });
   }, [fetchedPosts, config]);
 
@@ -313,8 +379,8 @@ function App() {
     if (!config || !filteredPosts) return [];
     
     return [...filteredPosts].sort((a, b) => {
-      const aPinned = config.pinnedPostIds?.includes(a.id) || false;
-      const bPinned = config.pinnedPostIds?.includes(b.id) || false;
+      const aPinned = config.pinnedPostIds?.has(a.id) || false;
+      const bPinned = config.pinnedPostIds?.has(b.id) || false;
       
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
@@ -622,6 +688,50 @@ function App() {
     setTimeout(() => setTestStatus('idle'), 3000);
   };
 
+  const renderPosts = useMemo(() => {
+    if (!config || !sortedPosts) return [];
+    
+    return sortedPosts.map(post => (
+      <div key={post.id} className={`bg-white p-4 rounded-lg shadow relative ${
+        config.pinnedPostIds?.has(post.id) ? 'border-2 border-yellow-400' : ''
+      }`}>
+        <button
+          onClick={() => handleHidePost(post.id)}
+          className="absolute top-2 right-2 text-gray-500 hover:text-red-500"
+          title="Hide post"
+        >
+          ✕
+        </button>
+        
+        <h3 className="font-bold pr-8">{post.title}</h3>
+        <p className="text-sm text-gray-600">
+          r/{post.subreddit}
+          {config.pinnedPostIds?.has(post.id) && (
+            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+              📌 Pinned
+            </span>
+          )}
+        </p>
+        <div className="mt-2 space-x-4">
+          <a 
+            href={post.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700"
+          >
+            View Post
+          </a>
+          <button
+            onClick={() => handlePinPost(post.id)}
+            className="text-yellow-500 hover:text-yellow-700"
+          >
+            {config.pinnedPostIds?.has(post.id) ? '📌 Unpin' : '📌 Pin'}
+          </button>
+        </div>
+      </div>
+    ));
+  }, [sortedPosts, config, handleHidePost, handlePinPost]);
+
   if (isCheckingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -734,54 +844,7 @@ function App() {
                 {postsError && (
                   <div className="text-center text-red-600">Error loading posts</div>
                 )}
-                {sortedPosts.map(post => {
-                  const postDate = new Date(post.created_utc * 1000);
-                  const isPinned = pinnedPostIds.includes(post.id);
-                  return (
-                    <div 
-                      key={post.id} 
-                      className={`border border-gray-200 rounded-lg p-4 hover:bg-gray-50 relative ${
-                        isPinned ? 'bg-yellow-50 hover:bg-yellow-100' : ''
-                      }`}
-                    >
-                      <div className="absolute top-2 right-2 flex gap-2">
-                        <button
-                          onClick={() => togglePin(post.id)}
-                          className={`p-1 rounded-full transition-colors ${
-                            isPinned 
-                              ? 'text-yellow-600 hover:text-yellow-700 hover:bg-yellow-100' 
-                              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                          }`}
-                          aria-label={isPinned ? 'Unpin post' : 'Pin post'}
-                        >
-                          {isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
-                        </button>
-                        <button
-                          onClick={() => hidePost(post.id)}
-                          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"
-                          aria-label="Hide post"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <a
-                        href={post.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block"
-                      >
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-sm font-medium text-purple-600">r/{post.subreddit}</span>
-                          <span className="text-gray-400">•</span>
-                          <span className="text-sm text-gray-600">
-                            Posted {format(postDate, 'dd/MM/yyyy HH:mm:ss')}
-                          </span>
-                        </div>
-                        <h2 className="text-lg font-semibold text-gray-800">{post.title}</h2>
-                      </a>
-                    </div>
-                  );
-                })}
+                {renderPosts}
                 {sortedPosts.length === 0 && !isLoadingPosts && (
                   <div className="text-center text-gray-600">
                     No matching posts found in the last {hoursBack} hours
@@ -1128,37 +1191,7 @@ function App() {
         </div>
 
         <div className="grid gap-4">
-          {sortedPosts.map(post => (
-            <div 
-              key={post.id} 
-              className={`bg-white p-4 rounded-lg shadow ${
-                config?.pinnedPostIds?.includes(post.id) ? 'border-2 border-yellow-400' : ''
-              }`}
-            >
-              <h3 className="font-bold">{post.title}</h3>
-              <p className="text-sm text-gray-600">
-                r/{post.subreddit}
-                {config?.pinnedPostIds?.includes(post.id) && (
-                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
-                    📌 Pinned
-                  </span>
-                )}
-              </p>
-              <div className="mt-2 space-x-4">
-                <a 
-                  href={post.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:text-blue-700"
-                >
-                  View Post
-                </a>
-                <span className="text-gray-500">
-                  by u/{post.author}
-                </span>
-              </div>
-            </div>
-          ))}
+          {renderPosts}
         </div>
       </div>
     </div>
